@@ -42,6 +42,17 @@ let celebratedRank = null;
 let answerBusy = false;
 let toastTimer = null;
 
+let hostAudioContext = null;
+let hostAudioUnlocked = false;
+let hostReadEnabled = localStorage.getItem("bingo-host-read") !== "off";
+let hostEffectsEnabled = localStorage.getItem("bingo-host-effects") !== "off";
+let hostSpeechRate = Number(localStorage.getItem("bingo-host-rate") || "0.95");
+let lastHostQuestionId = null;
+let lastHostRevealedQuestionId = null;
+let lastHostWinnerCount = 0;
+let latestHostData = null;
+let japaneseVoice = null;
+
 function showOnly(screen) {
   [landing, hostScreen, studentScreen].forEach(el => el.classList.toggle("hidden", el !== screen));
 }
@@ -110,6 +121,150 @@ function beep(frequency = 660, duration = 0.08, volume = 0.035) {
   } catch {}
 }
 
+function supportsSpeech() {
+  return "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+}
+
+function refreshJapaneseVoice() {
+  if (!supportsSpeech()) return;
+  const voices = window.speechSynthesis.getVoices();
+  japaneseVoice = voices.find(voice => voice.lang?.toLowerCase() === "ja-jp" && voice.localService)
+    || voices.find(voice => voice.lang?.toLowerCase().startsWith("ja") && voice.localService)
+    || voices.find(voice => voice.lang?.toLowerCase().startsWith("ja"))
+    || null;
+}
+
+function ensureHostAudioContext() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return null;
+  if (!hostAudioContext) hostAudioContext = new AudioContext();
+  if (hostAudioContext.state === "suspended") hostAudioContext.resume().catch(() => {});
+  return hostAudioContext;
+}
+
+function playHostNotes(notes) {
+  if (!hostEffectsEnabled || !hostAudioUnlocked) return;
+  const ctx = ensureHostAudioContext();
+  if (!ctx) return;
+  let at = ctx.currentTime + 0.02;
+  notes.forEach(([frequency, duration = 0.09, gap = 0.03, volume = 0.055]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(frequency, at);
+    gain.gain.setValueAtTime(0.0001, at);
+    gain.gain.exponentialRampToValueAtTime(volume, at + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(at);
+    osc.stop(at + duration + 0.02);
+    at += duration + gap;
+  });
+}
+
+function playHostEffect(type) {
+  const effects = {
+    enable: [[523, .08, .02], [659, .08, .02], [784, .13, .02]],
+    start: [[523, .10, .02], [659, .10, .02], [784, .10, .02], [1047, .20, .02]],
+    next: [[659, .07, .02], [784, .10, .02]],
+    reveal: [[880, .08, .02], [1175, .16, .02]],
+    tick: [[740, .055, .01, .045]],
+    winner: [[784, .10, .02], [988, .10, .02], [1175, .10, .02], [1568, .28, .02]]
+  };
+  playHostNotes(effects[type] || effects.next);
+}
+
+function normalizeSpeechText(text) {
+  return String(text ?? "")
+    .replaceAll("WHO", "ダブリュー エイチ オー")
+    .replaceAll("〜", "")
+    .replaceAll("II", "ツー")
+    .replace(/([0-9])\.([0-9])/g, "$1点$2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function speakJapanese(text, { force = false, interrupt = true } = {}) {
+  if (!supportsSpeech() || !hostAudioUnlocked || (!hostReadEnabled && !force)) return false;
+  refreshJapaneseVoice();
+  if (interrupt) window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(normalizeSpeechText(text));
+  utterance.lang = "ja-JP";
+  utterance.rate = Number.isFinite(hostSpeechRate) ? hostSpeechRate : 0.95;
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+  if (japaneseVoice) utterance.voice = japaneseVoice;
+  utterance.onerror = event => {
+    if (!["canceled", "interrupted"].includes(event.error)) {
+      showToast("読み上げに失敗しました。ブラウザの音量を確認してください。", 3600);
+    }
+  };
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+function questionSpeech(question, position) {
+  if (!question) return "";
+  return `第${position + 1}問。${question.text}。1番、${question.options[0]}。2番、${question.options[1]}。`;
+}
+
+function answerSpeech(question) {
+  if (!question?.answer) return "";
+  return `正解は、${question.answer}番、${question.options[question.answer - 1]}です。`;
+}
+
+function updateAudioControls() {
+  const enableButton = $("#audio-enable-btn");
+  const readButton = $("#read-toggle-btn");
+  const soundButton = $("#sound-toggle-btn");
+  const readAgainButton = $("#read-again-btn");
+  const rateSelect = $("#speech-rate");
+  const note = $("#audio-note");
+  if (!enableButton) return;
+
+  enableButton.textContent = hostAudioUnlocked ? "✓ 音声は有効です" : "音声を有効にする";
+  enableButton.classList.toggle("enabled", hostAudioUnlocked);
+  readButton.textContent = `🎙 自動読み上げ ${hostReadEnabled ? "ON" : "OFF"}`;
+  readButton.classList.toggle("on", hostReadEnabled);
+  readButton.classList.toggle("off", !hostReadEnabled);
+  readButton.setAttribute("aria-pressed", String(hostReadEnabled));
+  soundButton.textContent = `♪ 効果音 ${hostEffectsEnabled ? "ON" : "OFF"}`;
+  soundButton.classList.toggle("on", hostEffectsEnabled);
+  soundButton.classList.toggle("off", !hostEffectsEnabled);
+  soundButton.setAttribute("aria-pressed", String(hostEffectsEnabled));
+  if (rateSelect) rateSelect.value = String(hostSpeechRate);
+  if (readAgainButton) readAgainButton.disabled = !hostAudioUnlocked || !latestHostData?.question;
+
+  if (!supportsSpeech()) {
+    readButton.disabled = true;
+    if (note) note.textContent = "このブラウザは自動読み上げに対応していません。効果音は利用できます。";
+  } else if (note) {
+    note.textContent = hostAudioUnlocked
+      ? "問題と選択肢を教員PCから読み上げます。学生のスマホからは読み上げません。"
+      : "最初に「音声を有効にする」を1回押してください。音は教員PCから流れます。";
+  }
+}
+
+function unlockHostAudio({ announce = true } = {}) {
+  ensureHostAudioContext();
+  hostAudioUnlocked = true;
+  updateAudioControls();
+  if (announce && hostEffectsEnabled) playHostEffect("enable");
+  if (announce && supportsSpeech()) {
+    setTimeout(() => speakJapanese("音声を有効にしました。", { force: true }), 260);
+  }
+}
+
+function readCurrentQuestion() {
+  if (!latestHostData?.question) {
+    showToast("まだ問題が表示されていません。");
+    return;
+  }
+  if (!hostAudioUnlocked) unlockHostAudio({ announce: false });
+  speakJapanese(questionSpeech(latestHostData.question, latestHostData.room.currentPos), { force: true });
+}
+
 function confetti(amount = 70) {
   const layer = $("#confetti-layer");
   const colors = ["#2563eb", "#f59e0b", "#16a34a", "#ef4444", "#8b5cf6", "#ec4899"];
@@ -147,6 +302,11 @@ async function createRoom() {
 function setupHostScreen() {
   stopTimers();
   showOnly(hostScreen);
+  lastHostQuestionId = null;
+  lastHostRevealedQuestionId = null;
+  lastHostWinnerCount = 0;
+  latestHostData = null;
+  updateAudioControls();
   $("#host-room-code").textContent = hostSession.room;
   $("#host-pin").textContent = hostSession.pin;
   const url = joinLink(hostSession.room);
@@ -166,6 +326,8 @@ async function pollHost() {
 
 function renderHost(data) {
   const { room, question, stats, players, winners } = data;
+  latestHostData = data;
+  updateAudioControls();
   $("#stat-players").textContent = stats.players;
   $("#stat-answered").textContent = stats.answered;
   $("#stat-reach").textContent = stats.reach;
@@ -226,17 +388,45 @@ function renderHost(data) {
   }
 
   renderWinnerList($("#winner-list"), winners, "待機中");
+
+  if (question && question.id !== lastHostQuestionId) {
+    lastHostQuestionId = question.id;
+    lastHostRevealedQuestionId = null;
+    if (room.status === "live" && !room.revealed && hostAudioUnlocked) {
+      setTimeout(() => speakJapanese(questionSpeech(question, room.currentPos)), 180);
+    }
+  }
+
+  if (question && room.revealed && lastHostRevealedQuestionId !== question.id) {
+    lastHostRevealedQuestionId = question.id;
+    if (hostAudioUnlocked) {
+      playHostEffect("reveal");
+      setTimeout(() => speakJapanese(answerSpeech(question)), 220);
+    }
+  }
+
+  if (winners.length > lastHostWinnerCount && hostAudioUnlocked) {
+    playHostEffect("winner");
+    const newest = winners.slice(lastHostWinnerCount);
+    const announcement = newest.map(w => `第${w.rank}位、${w.name}さん。おめでとうございます。`).join(" ");
+    setTimeout(() => speakJapanese(announcement, { interrupt: false }), 420);
+  }
+  lastHostWinnerCount = winners.length;
 }
 
 async function hostAction(action) {
   if (!hostSession) return;
+  if (["start", "reveal", "next"].includes(action) && !hostAudioUnlocked) {
+    unlockHostAudio({ announce: false });
+  }
   try {
     await apiPost({ action, room: hostSession.room, pin: hostSession.pin });
+    if (action === "start") playHostEffect("start");
+    if (action === "next") playHostEffect("next");
     if (action === "reveal") {
       clearInterval(countdownTimer);
       countdownTimer = null;
       $("#countdown").textContent = "✓";
-      beep(880, .15, .05);
     }
     await pollHost();
   } catch (error) {
@@ -245,14 +435,15 @@ async function hostAction(action) {
 }
 
 function startCountdown() {
+  if (!hostAudioUnlocked) unlockHostAudio({ announce: false });
   clearInterval(countdownTimer);
   countdownValue = 10;
   $("#countdown").textContent = countdownValue;
-  beep(540);
+  playHostEffect("next");
   countdownTimer = setInterval(async () => {
     countdownValue -= 1;
     $("#countdown").textContent = countdownValue;
-    if (countdownValue <= 3 && countdownValue > 0) beep(720, .07, .045);
+    if (countdownValue <= 3 && countdownValue > 0) playHostEffect("tick");
     if (countdownValue <= 0) {
       clearInterval(countdownTimer);
       countdownTimer = null;
@@ -456,6 +647,27 @@ function bindEvents() {
     if (window.confirm("ゲームを終了しますか？")) hostAction("end");
   });
   $("#timer-btn").addEventListener("click", startCountdown);
+  $("#audio-enable-btn").addEventListener("click", () => unlockHostAudio());
+  $("#read-toggle-btn").addEventListener("click", () => {
+    hostReadEnabled = !hostReadEnabled;
+    localStorage.setItem("bingo-host-read", hostReadEnabled ? "on" : "off");
+    if (hostReadEnabled && !hostAudioUnlocked) unlockHostAudio({ announce: false });
+    updateAudioControls();
+    if (hostReadEnabled && latestHostData?.question) readCurrentQuestion();
+  });
+  $("#sound-toggle-btn").addEventListener("click", () => {
+    hostEffectsEnabled = !hostEffectsEnabled;
+    localStorage.setItem("bingo-host-effects", hostEffectsEnabled ? "on" : "off");
+    if (hostEffectsEnabled && !hostAudioUnlocked) unlockHostAudio({ announce: false });
+    updateAudioControls();
+    if (hostEffectsEnabled) playHostEffect("enable");
+  });
+  $("#speech-rate").addEventListener("change", event => {
+    hostSpeechRate = Number(event.target.value) || 0.95;
+    localStorage.setItem("bingo-host-rate", String(hostSpeechRate));
+    if (latestHostData?.question && hostAudioUnlocked) readCurrentQuestion();
+  });
+  $("#read-again-btn").addEventListener("click", readCurrentQuestion);
   $("#answer-1").addEventListener("click", () => submitAnswer(1));
   $("#answer-2").addEventListener("click", () => submitAnswer(2));
 }
@@ -499,6 +711,11 @@ function safeJson(value) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  if (supportsSpeech()) {
+    refreshJapaneseVoice();
+    window.speechSynthesis.addEventListener?.("voiceschanged", refreshJapaneseVoice);
+  }
   bindEvents();
+  updateAudioControls();
   await restoreFromUrl();
 });

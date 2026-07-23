@@ -68,6 +68,24 @@
             <div class="stat"><span>ビンゴ</span><strong id="stat-bingo">0</strong></div>
           </div>
 
+          <div class="panel compact audio-settings">
+            <h3>🔊 音声・読み上げ</h3>
+            <button id="audio-enable-btn" class="audio-enable">音声を有効にする</button>
+            <div class="audio-toggle-grid">
+              <button id="read-toggle-btn" class="mini-toggle" aria-pressed="true">🎙 自動読み上げ ON</button>
+              <button id="sound-toggle-btn" class="mini-toggle" aria-pressed="true">♪ 効果音 ON</button>
+            </div>
+            <label class="speech-rate-label">読み上げ速度
+              <select id="speech-rate">
+                <option value="0.82">ゆっくり</option>
+                <option value="0.95" selected>標準</option>
+                <option value="1.10">速め</option>
+              </select>
+            </label>
+            <button id="read-again-btn" class="secondary small" disabled>問題をもう一度読む</button>
+            <p id="audio-note" class="fine">最初に「音声を有効にする」を1回押してください。音は教員PCから流れます。</p>
+          </div>
+
           <div class="panel compact">
             <h3>参加者</h3>
             <div id="player-list" class="player-list">まだ参加者はいません</div>

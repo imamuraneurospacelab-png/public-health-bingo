@@ -1,0 +1,19 @@
+【すでにCloudflareで公開済みの場合の更新方法】
+
+1. GitHubで public-health-bingo を開く
+2. 青いフォルダ「public」を開く
+3. 右上の Add file → Upload files
+4. この更新版に入っている次の3ファイルをドラッグする
+   ・app.js
+   ・index.html
+   ・styles.css
+5. 画面下の Commit changes を押す
+6. Cloudflareが自動で再デプロイするまで1〜2分待つ
+7. public-health-bingo.pages.dev を開き直す
+   古い画面のままなら Mac は Command + Shift + R
+
+D1データベース、Bindings、schema.sqlは変更不要です。
+
+【授業当日】
+教員画面の「音声を有効にする」を最初に1回押します。
+以後は、ゲーム開始・次の問題・正解発表に合わせて自動で音が流れます。
