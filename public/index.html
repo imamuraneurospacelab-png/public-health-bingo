@@ -49,7 +49,10 @@
           <div class="eyebrow">教員画面</div>
           <h1>公衆衛生クイズ・ビンゴ</h1>
         </div>
-        <div class="room-badge">ROOM <strong id="host-room-code">------</strong></div>
+        <div class="host-top-actions">
+          <button id="audio-enable-btn" class="audio-enable host-audio-button">🔊 音声テスト／有効化</button>
+          <div class="room-badge">ROOM <strong id="host-room-code">------</strong></div>
+        </div>
       </header>
 
       <div class="host-layout">
@@ -70,7 +73,6 @@
 
           <div class="panel compact audio-settings">
             <h3>🔊 音声・読み上げ</h3>
-            <button id="audio-enable-btn" class="audio-enable">音声を有効にする</button>
             <div class="audio-toggle-grid">
               <button id="read-toggle-btn" class="mini-toggle" aria-pressed="true">🎙 自動読み上げ ON</button>
               <button id="sound-toggle-btn" class="mini-toggle" aria-pressed="true">♪ 効果音 ON</button>
@@ -83,7 +85,7 @@
               </select>
             </label>
             <button id="read-again-btn" class="secondary small" disabled>問題をもう一度読む</button>
-            <p id="audio-note" class="fine">最初に「音声を有効にする」を1回押してください。音は教員PCから流れます。</p>
+            <p id="audio-note" class="fine">画面右上の「音声テスト／有効化」を1回押してください。リーチ・ビンゴ音声は教員PCから流れます。</p>
           </div>
 
           <div class="panel compact">
