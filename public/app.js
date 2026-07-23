@@ -100,12 +100,57 @@ async function apiGet(params) {
   return data;
 }
 
-function joinLink(code) {
+function normalizeRoomCode(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+}
+
+function canonicalJoinBaseUrl() {
   const url = new URL(window.location.href);
+  // Cloudflareの個別デプロイURLから開いていても、学生用QRは常に本番URLへ向ける。
+  if (/^[a-z0-9-]+\.public-health-bingo\.pages\.dev$/i.test(url.hostname)) {
+    url.hostname = "public-health-bingo.pages.dev";
+  }
+  url.pathname = "/";
   url.search = "";
   url.hash = "";
-  url.searchParams.set("room", code);
+  return url;
+}
+
+function joinLink(code) {
+  const room = normalizeRoomCode(code);
+  const url = canonicalJoinBaseUrl();
+  // QR読み取りアプリがqueryかhashの片方を落としても復元できるよう二重化する。
+  url.searchParams.set("room", room);
+  url.hash = `room=${room}`;
   return url.toString();
+}
+
+function roomCodeFromUrl() {
+  const queryCode = new URLSearchParams(location.search).get("room");
+  if (normalizeRoomCode(queryCode).length === 6) return normalizeRoomCode(queryCode);
+
+  let rawHash = "";
+  try {
+    rawHash = decodeURIComponent(location.hash.replace(/^#/, "").trim());
+  } catch {
+    rawHash = location.hash.replace(/^#/, "").trim();
+  }
+
+  const hashParams = new URLSearchParams(rawHash.replace(/^\?/, ""));
+  const hashParamCode = hashParams.get("room");
+  if (normalizeRoomCode(hashParamCode).length === 6) return normalizeRoomCode(hashParamCode);
+
+  // #ABC123、#/join/ABC123 のような形式にも対応。
+  const hashMatch = rawHash.match(/(?:^|[\/=])([A-Z0-9]{6})(?:$|[&/?])/i);
+  if (hashMatch) return normalizeRoomCode(hashMatch[1]);
+
+  const pathMatch = location.pathname.match(/(?:room|join)\/([A-Z0-9]{6})(?:\/|$)/i);
+  if (pathMatch) return normalizeRoomCode(pathMatch[1]);
+
+  return "";
 }
 
 function makeQrUrl(text) {
@@ -643,7 +688,7 @@ function startCountdown() {
 }
 
 async function joinRoom() {
-  const room = $("#join-room").value.toUpperCase().replace(/\s/g, "");
+  const room = normalizeRoomCode($("#join-room").value);
   const name = $("#join-name").value.trim();
   if (!room || !name) {
     showToast("ルームコードとニックネームを入力してください。");
@@ -655,7 +700,7 @@ async function joinRoom() {
     const data = await apiPost({ action: "join", room, name });
     playerSession = { room: data.room, playerId: data.playerId, name };
     localStorage.setItem(`bingo-player-${data.room}`, JSON.stringify(playerSession));
-    history.replaceState(null, "", `?room=${data.room}`);
+    history.replaceState(null, "", `/?room=${data.room}#room=${data.room}`);
     setupStudentScreen();
     await pollStudent();
     studentPollTimer = setInterval(pollStudent, 1200);
@@ -843,7 +888,7 @@ function bindEvents() {
     primeEventAudio();
     joinRoom();
   });
-  $("#join-room").addEventListener("input", event => { event.target.value = event.target.value.toUpperCase(); });
+  $("#join-room").addEventListener("input", event => { event.target.value = normalizeRoomCode(event.target.value); });
   $("#join-name").addEventListener("keydown", event => { if (event.key === "Enter") joinRoom(); });
   $("#start-btn").addEventListener("click", () => hostAction("start"));
   $("#reveal-btn").addEventListener("click", () => hostAction("reveal"));
@@ -877,10 +922,18 @@ function bindEvents() {
   $("#answer-2").addEventListener("click", () => submitAnswer(2));
 }
 
+window.addEventListener("hashchange", () => {
+  if (playerSession || !landing || landing.classList.contains("hidden")) return;
+  const roomCode = roomCodeFromUrl();
+  if (!roomCode) return;
+  $("#join-room").value = roomCode;
+  $("#join-name").focus();
+});
+
 async function restoreFromUrl() {
   const params = new URLSearchParams(location.search);
-  const hostCode = params.get("host")?.toUpperCase();
-  const roomCode = params.get("room")?.toUpperCase();
+  const hostCode = normalizeRoomCode(params.get("host"));
+  const roomCode = roomCodeFromUrl();
 
   if (hostCode) {
     const saved = safeJson(localStorage.getItem(`bingo-host-${hostCode}`));
